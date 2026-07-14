@@ -360,7 +360,7 @@ else:
         
         # Visualisasi Tren Penjualan
         st.markdown("#### Tren Penjualan")
-        df_trend = df.set_index('Tanggal_Dibuat').resample('M')['Total_Pendapatan'].sum().reset_index()
+        df_trend = df.set_index('Tanggal_Dibuat').resample('ME')['Total_Pendapatan'].sum().reset_index()
         df_trend['Bulan'] = df_trend['Tanggal_Dibuat'].dt.strftime('%b %Y')
         
         fig_trend = px.line(df_trend, x='Bulan', y='Total_Pendapatan', markers=True,
