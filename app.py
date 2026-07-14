@@ -245,9 +245,10 @@ def normalize_and_cluster(rfm, k_clusters):
 
 @st.cache_data
 def calculate_optimal_k_metrics(X_scaled):
-    """Menghitung Inertia dan Silhouette Score untuk K dari 2 sampai 8 untuk Analisis Elbow."""
+    """Menghitung Inertia, Silhouette Score, dan Davies-Bouldin Index untuk K dari 2 sampai 8."""
     inertias = []
     silhouette_scores = []
+    db_scores = []
     k_range = list(range(2, 9))
     
     for k in k_range:
@@ -255,8 +256,9 @@ def calculate_optimal_k_metrics(X_scaled):
         labels = kmeans.fit_predict(X_scaled)
         inertias.append(kmeans.inertia_)
         silhouette_scores.append(silhouette_score(X_scaled, labels))
+        db_scores.append(davies_bouldin_score(X_scaled, labels))
         
-    return k_range, inertias, silhouette_scores
+    return k_range, inertias, silhouette_scores, db_scores
 
 # ==========================================
 # 2. SIDEBAR (Input & Konfigurasi)
@@ -359,16 +361,38 @@ else:
         st.write("") # Spacer
         
         # Visualisasi Tren Penjualan
-        st.markdown("#### Tren Penjualan")
-        df_trend = df.set_index('Tanggal_Dibuat').resample('ME')['Total_Pendapatan'].sum().reset_index()
+        st.markdown("#### Tren Bisnis Bulanan")
+        df_trend = df.set_index('Tanggal_Dibuat').resample('ME').agg(
+            Total_Pendapatan=('Total_Pendapatan', 'sum'),
+            Jumlah_Transaksi=('Nomor_Pesanan', 'count'),
+            Pembeli_Unik=('Nama_Pembeli', 'nunique')
+        ).reset_index()
         df_trend['Bulan'] = df_trend['Tanggal_Dibuat'].dt.strftime('%b %Y')
         
-        fig_trend = px.line(df_trend, x='Bulan', y='Total_Pendapatan', markers=True,
-                            title="Tren Pendapatan Bulanan",
-                            labels={'Total_Pendapatan': 'Total Pendapatan (Rp)'},
-                            color_discrete_sequence=['#2563EB'])
-        fig_trend.update_layout(xaxis_title="", yaxis_title="Pendapatan", hovermode="x unified")
-        st.plotly_chart(fig_trend, use_container_width=True)
+        tab_pendapatan, tab_transaksi, tab_pembeli = st.tabs(["Total Pendapatan", "Jumlah Transaksi", "Pembeli Unik"])
+        with tab_pendapatan:
+            fig_trend1 = px.line(df_trend, x='Bulan', y='Total_Pendapatan', markers=True, color_discrete_sequence=['#2ecc71'])
+            fig_trend1.update_layout(xaxis_title="", yaxis_title="Pendapatan (Rp)", hovermode="x unified", height=300, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_trend1, use_container_width=True)
+        with tab_transaksi:
+            fig_trend2 = px.line(df_trend, x='Bulan', y='Jumlah_Transaksi', markers=True, color_discrete_sequence=['#3498db'])
+            fig_trend2.update_layout(xaxis_title="", yaxis_title="Jumlah Transaksi", hovermode="x unified", height=300, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_trend2, use_container_width=True)
+        with tab_pembeli:
+            fig_trend3 = px.line(df_trend, x='Bulan', y='Pembeli_Unik', markers=True, color_discrete_sequence=['#e74c3c'])
+            fig_trend3.update_layout(xaxis_title="", yaxis_title="Pembeli Unik", hovermode="x unified", height=300, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_trend3, use_container_width=True)
+            
+        st.markdown("#### Distribusi Transaksi")
+        col_dist1, col_dist2 = st.columns(2)
+        with col_dist1:
+            fig_dist_harga = px.histogram(df, x='Harga_Jual', nbins=50, color_discrete_sequence=['#3498db'], log_y=True)
+            fig_dist_harga.update_layout(title="Distribusi Harga Jual (Log Scale)", xaxis_title="Harga Jual (Rp)", yaxis_title="Frekuensi", height=300, margin=dict(t=40, b=10))
+            st.plotly_chart(fig_dist_harga, use_container_width=True)
+        with col_dist2:
+            fig_dist_pend = px.histogram(df, x='Total_Pendapatan', nbins=50, color_discrete_sequence=['#2ecc71'], log_y=True)
+            fig_dist_pend.update_layout(title="Distribusi Total Pendapatan per Transaksi (Log Scale)", xaxis_title="Total Pendapatan (Rp)", yaxis_title="Frekuensi", height=300, margin=dict(t=40, b=10))
+            st.plotly_chart(fig_dist_pend, use_container_width=True)
         
         # Bar Charts untuk Produk & Pembeli Top
         col_a, col_b = st.columns(2)
@@ -460,6 +484,15 @@ else:
             fig_dist.update_layout(showlegend=False, height=400)
             st.plotly_chart(fig_dist, use_container_width=True)
             
+        # Deteksi Outlier (Boxplot)
+        st.markdown("#### Deteksi Outlier RFM")
+        fig_box = make_subplots(rows=1, cols=3, subplot_titles=('Recency', 'Frequency', 'Monetary'))
+        fig_box.add_trace(go.Box(y=rfm['Recency'], name="Recency", marker_color='#3B82F6'), row=1, col=1)
+        fig_box.add_trace(go.Box(y=rfm['Frequency'], name="Frequency", marker_color='#10B981'), row=1, col=2)
+        fig_box.add_trace(go.Box(y=rfm['Monetary'], name="Monetary", marker_color='#F59E0B'), row=1, col=3)
+        fig_box.update_layout(showlegend=False, height=400, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_box, use_container_width=True)
+        
         # Korelasi antar Metrik RFM
         st.markdown("#### Korelasi antar Metrik (Heatmap)")
         corr_matrix = rfm[['Recency', 'Frequency', 'Monetary']].corr()
@@ -493,33 +526,27 @@ else:
         
         with st.expander("🔍 Cari Jumlah Cluster Optimal (Metode Elbow & Silhouette)", expanded=False):
             st.write("Gunakan visualisasi ini untuk membantu menentukan jumlah kelompok (K) terbaik secara ilmiah:")
-            k_range, inertias, sil_scores = calculate_optimal_k_metrics(rfm_scaled)
+            k_range, inertias, sil_scores, db_scores = calculate_optimal_k_metrics(rfm_scaled)
             
-            # Elbow Chart
-            fig_elbow = go.Figure()
-            fig_elbow.add_trace(go.Scatter(x=k_range, y=inertias, mode='lines+markers', 
-                                           line=dict(color='#3B82F6', width=3),
-                                           marker=dict(size=8)))
-            fig_elbow.update_layout(title="Metode Elbow (WCSS / Inertia)",
-                                    xaxis_title="Jumlah Cluster (K)",
-                                    yaxis_title="Inertia (WCSS)",
-                                    height=300, margin=dict(l=20, r=20, t=40, b=20))
-            
-            # Silhouette Chart
-            fig_sil = go.Figure()
-            fig_sil.add_trace(go.Scatter(x=k_range, y=sil_scores, mode='lines+markers', 
-                                         line=dict(color='#10B981', width=3),
-                                         marker=dict(size=8)))
-            fig_sil.update_layout(title="Silhouette Score per Cluster (K)",
-                                  xaxis_title="Jumlah Cluster (K)",
-                                  yaxis_title="Silhouette Score",
-                                  height=300, margin=dict(l=20, r=20, t=40, b=20))
-            
-            col_e1, col_e2 = st.columns(2)
+            col_e1, col_e2, col_e3 = st.columns(3)
             with col_e1:
+                # Elbow Chart
+                fig_elbow = go.Figure()
+                fig_elbow.add_trace(go.Scatter(x=k_range, y=inertias, mode='lines+markers', line=dict(color='#3B82F6', width=3), marker=dict(size=8)))
+                fig_elbow.update_layout(title="Metode Elbow (WCSS)", xaxis_title="Jumlah Cluster (K)", yaxis_title="Inertia", height=300, margin=dict(l=10, r=10, t=40, b=20))
                 st.plotly_chart(fig_elbow, use_container_width=True)
             with col_e2:
+                # Silhouette Chart
+                fig_sil = go.Figure()
+                fig_sil.add_trace(go.Scatter(x=k_range, y=sil_scores, mode='lines+markers', line=dict(color='#10B981', width=3), marker=dict(size=8)))
+                fig_sil.update_layout(title="Silhouette Score", xaxis_title="Jumlah Cluster (K)", yaxis_title="Score", height=300, margin=dict(l=10, r=10, t=40, b=20))
                 st.plotly_chart(fig_sil, use_container_width=True)
+            with col_e3:
+                # DB Index Chart
+                fig_db = go.Figure()
+                fig_db.add_trace(go.Scatter(x=k_range, y=db_scores, mode='lines+markers', line=dict(color='#EC4899', width=3), marker=dict(size=8)))
+                fig_db.update_layout(title="Davies-Bouldin Index", xaxis_title="Jumlah Cluster (K)", yaxis_title="Index", height=300, margin=dict(l=10, r=10, t=40, b=20))
+                st.plotly_chart(fig_db, use_container_width=True)
         
         col1, col2 = st.columns(2)
         
@@ -638,6 +665,47 @@ else:
     # TAB 4: REKOMENDASI & EKSPOR
     # ------------------------------------------
     with tab4:
+        st.markdown("### Peta Segmen & Kontribusi Bisnis")
+        
+        # Kontribusi Pendapatan per Segmen
+        seg_rev = rfm_clustered.groupby('Segmen').agg(
+            Jumlah_Pelanggan=('Nama_Pembeli', 'count'),
+            Total_Monetary=('Monetary', 'sum'),
+            Rata_Monetary=('Monetary', 'mean')
+        ).reset_index()
+        seg_rev['Pct_Pelanggan'] = (seg_rev['Jumlah_Pelanggan'] / seg_rev['Jumlah_Pelanggan'].sum() * 100)
+        seg_rev['Pct_Revenue'] = (seg_rev['Total_Monetary'] / seg_rev['Total_Monetary'].sum() * 100)
+        
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("#### % Pelanggan vs % Pendapatan")
+            fig_bar_rev = go.Figure()
+            fig_bar_rev.add_trace(go.Bar(x=seg_rev['Segmen'], y=seg_rev['Pct_Pelanggan'], name='% Populasi', marker_color='#3498db'))
+            fig_bar_rev.add_trace(go.Bar(x=seg_rev['Segmen'], y=seg_rev['Pct_Revenue'], name='% Pendapatan', marker_color='#e74c3c'))
+            fig_bar_rev.update_layout(barmode='group', height=400, margin=dict(t=10, b=10), hovermode="x unified")
+            st.plotly_chart(fig_bar_rev, use_container_width=True)
+            
+        with col_c2:
+            st.markdown("#### Peta Segmen Pelanggan")
+            seg_summary = rfm_clustered.groupby('Segmen').agg(
+                Avg_Recency=('Recency', 'mean'), Avg_Frequency=('Frequency', 'mean'),
+                Avg_Monetary=('Monetary', 'mean'), Count=('Nama_Pembeli', 'count')
+            ).reset_index()
+            fig_bubble = px.scatter(seg_summary, x='Avg_Frequency', y='Avg_Monetary', size='Count', color='Avg_Recency',
+                                    hover_name='Segmen', color_continuous_scale='RdYlGn_r',
+                                    labels={'Avg_Frequency': 'Frequency (Kali)', 'Avg_Monetary': 'Monetary (Rp)', 'Avg_Recency': 'Recency (hari)'})
+            fig_bubble.update_layout(height=400, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_bubble, use_container_width=True)
+            
+        # Boxplot RFM antar segmen
+        st.markdown("#### Distribusi Metrik RFM Antar Segmen")
+        fig_box_seg = make_subplots(rows=1, cols=3, subplot_titles=('Recency', 'Frequency', 'Monetary'))
+        for idx, col in enumerate(['Recency', 'Frequency', 'Monetary']):
+            fig_box_seg.add_trace(go.Box(x=rfm_clustered['Segmen'], y=rfm_clustered[col], name=col, marker_color='#8B5CF6'), row=1, col=idx+1)
+        fig_box_seg.update_layout(showlegend=False, height=400, margin=dict(t=30, b=10))
+        st.plotly_chart(fig_box_seg, use_container_width=True)
+        
+        st.markdown("---")
         st.markdown("### Strategi Bisnis Berdasarkan Segmen")
         
         # Define strategies dynamically based on cluster label
